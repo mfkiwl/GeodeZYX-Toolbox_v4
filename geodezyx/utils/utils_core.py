@@ -273,6 +273,42 @@ def pickle_loader(pathin):
 
     return outdata
 
+
+
+def globals_filtered():
+    """
+    Filter globals() varirables with only compatible variables for pickle.
+    
+    https://stackoverflow.com/questions/2960864/how-to-save-all-the-variables-in-the-current-python-session
+
+
+    Returns
+    -------
+    data_out : dict
+        filtered globals() variables.
+
+    """
+    from spyder_kernels.utils.nsview import globalsfilter,get_supported_types
+
+    data = globals()
+    
+    #settings = VariableExplorer.get_settings()
+
+
+    data_out = globalsfilter(globals(),                   
+                         check_all=True,
+                         filters=tuple(get_supported_types()['picklable']),
+                         exclude_private=True,
+                         exclude_uppercase=False,
+                         exclude_capitalized=True,
+                         exclude_unsupported=True,
+                         excluded_names=[],
+                         exclude_callables_and_modules=True)
+    
+    return data_out
+
+
+
 def memmap_from_array(arrin):
     nam = str(np.random.randint(99999)) + '.mmp.tmp'
     path = os.path.join(tempfile.mkdtemp(), nam)
@@ -463,13 +499,16 @@ def extract_text_between_elements(file_path,elt_start,elt_end):
 def extract_text_between_elements_2(file_path , elt_start , elt_end,
                                            return_string = False,
                                            nth_occur_elt_start=0,
-                                           nth_occur_elt_end=0):
+                                           nth_occur_elt_end=0,
+                                           invert=False,
+                                           verbose=False):
     """
     This function is based on REGEX (elt_start , elt_end are REGEX)
     and can manage several blocks in the same file
 
     return_string = True  : returns a string of the matched lines
     return_string = False : returns a list of the matched lines
+    invert : exclude text between the pattern
     
     NB : in SINEX context, with "+MARKER", use backslash i.e.
          "\\+MARKER"    
@@ -479,19 +518,27 @@ def extract_text_between_elements_2(file_path , elt_start , elt_end,
     """
     
     if type(file_path) is str:
-        F = open(file_path,"r",encoding = "ISO-8859-1")
+        try:
+            F = open(file_path,"r",encoding = "ISO-8859-1")
+        except:
+            F = open(file_path,"r")
     else:
         F = file_path
     
     out_lines_list = []
     
     trigger = False
+    if invert:
+        trigger = not trigger
+        
     last_triggered_line = False
     
     for line in F:
 
         if re.search(elt_start , line) and nth_occur_elt_start == 0:
             trigger = True
+            if invert:
+                trigger = not trigger
         elif re.search(elt_start , line) and nth_occur_elt_start > 0:
             nth_occur_elt_start = nth_occur_elt_start - 1
         
@@ -499,13 +546,18 @@ def extract_text_between_elements_2(file_path , elt_start , elt_end,
             last_triggered_line = True
         elif trigger and re.search(elt_end , line) and nth_occur_elt_end > 0:
             nth_occur_elt_end = nth_occur_elt_end - 1
-            
+                        
         if trigger:
+            if verbose:
+                print(line)
             out_lines_list.append(line)
             
         if last_triggered_line:
-            trigger = False
             last_triggered_line = False
+            trigger = False
+            if invert:
+                trigger = not trigger
+            
 
     if return_string:
         return "".join(out_lines_list)
@@ -602,11 +654,17 @@ def get_type_smart(obj_in):
     
 
 class Tee(object):
-    # based on
-    # http://stackoverflow.com/questions/11325019/output-on-the-console-and-file-using-python
-    # Secondary links
-    # http://stackoverflow.com/questions/616645/how-do-i-duplicate-sys-stdout-to-a-log-file-in-python
-    # http://stackoverflow.com/questions/2996887/how-to-replicate-tee-behavior-in-python-when-using-subprocess
+    """
+    Internal class for Tee_frontend
+    
+    Source
+    ------
+        based on
+        http://stackoverflow.com/questions/11325019/output-on-the-console-and-file-using-python
+        Secondary links
+        http://stackoverflow.com/questions/616645/how-do-i-duplicate-sys-stdout-to-a-log-file-in-python
+        http://stackoverflow.com/questions/2996887/how-to-replicate-tee-behavior-in-python-when-using-subprocess
+    """
     def __init__(self, *files):
         self.original = sys.stdout
         self.files = [sys.stdout] + list(files)
@@ -634,17 +692,44 @@ class Tee(object):
         self.files = self.files_saved
         sys.stdout = self
 
-def Tee_frontend(pathin,prefix,suffix='',ext='log',print_timestamp=True):
+def Tee_frontend(dir_in,logname_in,suffix='',ext='log',print_timestamp=True):
+    """
+    Write in a file the console output
+
+    Parameters
+    ----------
+    dir_in : str
+        directory path.
+    logname_in : str
+        logfile name.
+    suffix : str, optional
+        An optional suffix. The default is ''.
+    ext : str, optional
+        file extension. The default is 'log'.
+    print_timestamp : bool, optional
+        print a timestamp in the filename. The default is True.
+
+    Returns
+    -------
+    F_tee : F_tee object
+        Object controling the output
+        
+    Note
+    ----
+        It is recommended to stop the writing at the end of the script
+        with F_tee.stop()
+
+    """
     #if suffix != '':
     #    suffix = suffix + '_'
     if print_timestamp:
         ts = '_' + get_timestamp()
     else:
         ts = ''
-    f = open(os.path.join(pathin,prefix +'_'+suffix+ts+'.'+ext), 'w')
-    f_tee = Tee(f)
+    f = open(os.path.join(dir_in,logname_in +'_'+suffix+ts+'.'+ext), 'w')
+    F_tee = Tee(f)
     #sys.stdout = f_tee
-    return f_tee
+    return F_tee
 
 def alphabet(num=None):
     if not num:

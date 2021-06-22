@@ -1,35 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jun 27 16:07:11 2019
+@author: psakic
 
-@author: psakicki, mansur, chaiyap
+This sub-module of geodezyx.files_rw contains reading functions to 
+import files containing geodetic observations/products.
+
+it can be imported directly with:
+from geodezyx import files_rw
 
 The GeodeZYX Toolbox is a software for simple but useful
-functions for Geodesy and Geophysics
+functions for Geodesy and Geophysics under the GNU GPL v3 License
 
-Copyright (C) 2019 Pierre Sakic (GFZ, pierre.sakic@gfz-postdam.de)
+Copyright (C) 2019 Pierre Sakic et al. (GFZ, pierre.sakic@gfz-postdam.de)
 GitHub repository :
-https://github.com/PierreS1/GeodeZYX-Toolbox-Lite
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/>.
+https://github.com/GeodeZYX/GeodeZYX-Toolbox_v4
 """
-
 
 ########## BEGIN IMPORT ##########
 #### External modules
 import datetime as dt
+import gzip
 import linecache
 import io
 import numpy as np
@@ -101,7 +92,7 @@ def read_bull_B(file_path_in):
     return DFout
 
 
-def read_clk(file_path_in):
+def read_clk(file_path_in,names_4char=False):
     """
     Read an IGS clk file
 
@@ -109,10 +100,16 @@ def read_clk(file_path_in):
     ----------
     file_path_in :  str
         Path of the file in the local machine.
+        can handle gzip-compressed file (with .gz/.GZ extension) 
+    names_4char : bool
+        Force the station names to have 4 charaters
+        (new naming convention is longer)
+
     Returns
     -------
     DFclk : pandas DataFrame
         Returns a panda table format with the data extracted from the file.
+        
     Note
     ----
     Bias is given in seconds
@@ -123,16 +120,68 @@ def read_clk(file_path_in):
     DFclk = pd.read_csv(file_path_in,skiprows=HeadLine[0]+1,header=None,
                         delim_whitespace = True,
                         names=['type', 'name', 'year', 'month', 'day', 'hour',
-                             'minute', 'second',"n_values",'bias', 'sigma'])
+                               'minute', 'second',"n_values",'bias', 'sigma'])
     
     DFclk["ac"] = os.path.basename(file_path_in)[:3] 
     DFclk["name"] = DFclk["name"].str.upper()
+    if names_4char:
+        DFclk['name'] = DFclk['name'].str[:4]
     
     DFclk['epoch'] = pd.to_datetime(DFclk[['year', 'month', 'day',
                                            'hour','minute', 'second']])
     DFclk.path = file_path_in
     
     return DFclk
+
+
+def read_clk_from_sp3(file_path_or_DForb_in):
+    """
+    Get the clock values from a SP3 file of an Orbit DataFrame,
+    formated as a Clock DataFrame
+
+    Parameters
+    ----------
+    file_path_or_DForb_in : str or DataFrame
+        the input SP3 file path or an Orbit DataFrame.
+
+    Returns
+    -------
+    DFclk_sp3 : DataFrame
+        Clock DataFrame.
+
+    """
+    if type(file_path_or_DForb_in) is str:
+        DForb = read_sp3(file_path_or_DForb_in)
+    else:
+        DForb = file_path_or_DForb_in
+        
+    nlines = len(DForb)
+
+    ### replace 999999.999999 with NaN
+    DForb.loc[np.isclose(DForb.clk,999999.999999),'clk'] = np.nan
+
+    DFclk_sp3 = pd.DataFrame([["AS"] * nlines,
+                                DForb.sat,
+                                DForb.epoch.dt.year,
+                                DForb.epoch.dt.month,
+                                DForb.epoch.dt.day,
+                                DForb.epoch.dt.hour,
+                                DForb.epoch.dt.minute,
+                                DForb.epoch.dt.second,
+                                [1] * nlines,
+                                DForb.clk * 10**-6,
+                                [np.nan] * nlines,
+                                DForb.AC,
+                                DForb.epoch]).T
+    
+    DFclk_sp3 = DFclk_sp3.infer_objects()
+    
+    
+    DFclk_sp3.columns = ['type', 'name', 'year', 'month', 
+                         'day', 'hour', 'minute', 'second',
+                         'n_values', 'bias', 'sigma', 'ac', 'epoch']
+    
+    return DFclk_sp3
 
 
 def read_sp3(file_path_in,returns_pandas = True, name = '',
@@ -146,6 +195,7 @@ def read_sp3(file_path_in,returns_pandas = True, name = '',
     ----------
     file_path_in : str
         path of the SP3 file
+        can handle gzip-compressed file (with .gz/.GZ extension) 
 
     returns_pandas : bool
         if True, return a Pandas DataFrame.
@@ -176,38 +226,43 @@ def read_sp3(file_path_in,returns_pandas = True, name = '',
 
     """
     
-
-    
-
     AC_name =  os.path.basename(file_path_in)[:3]
-
-    fil = open(file_path_in,'r+')
+    
+    if file_path_in[-2:] in ("gz","GZ"):
+        F = gzip.open(file_path_in, "r+")
+        Lines = [e.decode('utf-8') for e in F]
+    else:
+        F = open(file_path_in,'r+')
+        Lines = F.readlines()
 
     header = True
-
 
     #### List/DF initialization
     epoch_stk = []
     Xstk , Ystk , Zstk , Clkstk = [],[],[],[]
-    Typestk     = []
+    #Typestk     = []
     data_stk    = []
     AC_name_stk = []
-    
-    if returns_pandas:
-        df = pd.DataFrame(data_stk, columns=['epoch','sat', 'const', 'sv','type',
-                                             'x','y','z','clk','AC'])
-
+   
+    # Why this here ?!? (PSa 202104)
+    # if returns_pandas:
+    #     df = pd.DataFrame(data_stk, columns=['epoch','sat', 'const', 'sv','type',
+    #                                        'x','y','z','clk','AC'])
 
     #### read the Header as a 1st check
-    Header = read_sp3_header(file_path_in)
+    Header = read_sp3_header(Lines,AC_name)
     if Header.empty:
         print("WARN:read_sp3: The SP3 looks empty: ",file_path_in)
         if returns_pandas:
+            df = pd.DataFrame([], columns=['epoch','sat', 'const',
+                                           'sv','type',
+                                           'x','y','z',
+                                           'clk','AC'])
             return df
         else:
             return  epoch_stk ,  Xstk , Ystk , Zstk , Clkstk , AC_name_stk
 
-    for l in fil:
+    for l in Lines:
         if l[0] == '*':
             header = False
 
@@ -262,8 +317,10 @@ def read_sp3(file_path_in,returns_pandas = True, name = '',
     AC_name_stk = [AC_name] * len(Xstk)
 
     if returns_pandas:
-        df = pd.DataFrame(data_stk, columns=['epoch','sat', 'const', 'sv','type',
-                                             'x','y','z','clk','AC'])
+        df = pd.DataFrame(data_stk, columns=['epoch','sat', 'const',
+                                             'sv','type',
+                                             'x','y','z',
+                                             'clk','AC'])
         
         if skip_null_epoch:
             df = sp3_DataFrame_zero_epoch_filter(df)
@@ -286,17 +343,24 @@ def read_sp3(file_path_in,returns_pandas = True, name = '',
 
 
 
-def read_sp3_header(sp3_path):
+def read_sp3_header(sp3_in,ac_name_in=None):
     """
     Read a SP3 file header and return a Pandas DataFrame
     with sat. PRNs and sigmas contained in the header
 
     Parameters
     ----------
-    sp3_path : str
+    sp3_in : str or list
         path of the SP3 file
+        can handle gzip-compressed file (with .gz/.GZ extension) 
 
-
+        can also handle the sp3 content as a list of strings
+        (useful when read_sp3_header is used as a subfunction of read_sp3)
+        
+    ac_name_in : str
+        force the AC name
+        (necessary when read_sp3_header is used as a subfunction of read_sp3)
+        
     Returns
     -------
     Header_DF : Pandas DataFrame
@@ -308,12 +372,20 @@ def read_sp3_header(sp3_path):
     http://acc.igs.org/orbacc.txt
     """
 
-
-    F = open(sp3_path)
-    ac_name = os.path.basename(sp3_path)[:3]
-
-
-    Lines = F.readlines()
+    if type(sp3_in) is list: 
+        ### case when read_sp3_header is used as a subfunction of read_sp3
+        Lines = sp3_in
+    elif sp3_in[-2:] in ("gz","GZ"):
+        F = gzip.open(sp3_in, "r+")
+        Lines = [e.decode('utf-8') for e in F]
+    else:
+        F = open(sp3_in,'r+')
+        Lines = F.readlines()
+    
+    if not ac_name_in:
+        ac_name = os.path.basename(sp3_in)[:3]
+    else:
+        ac_name = ac_name_in
 
     Sat_prn_list = []
     Sat_sig_list = []
@@ -393,10 +465,11 @@ def sp3_DataFrame_zero_epoch_filter(DFsp3):
     return DFsp3_out
 
 
-def read_erp_multi(path_list , return_array=False,
-                   smart_mode=True):
+def read_erp_multi(path_list, 
+                   return_array=False,
+                   smart_mode=True,
+                   ac=None):
     """
-    DISCONTINUED BUT CAN BE REACTIVATED
     Input :
         path_list : a list of ERP files
         smart_mode : keep only the latest value (True is recommended)
@@ -404,7 +477,7 @@ def read_erp_multi(path_list , return_array=False,
     path_list = sorted(path_list)
     Lstk = []
     for path in path_list:
-        L = read_erp2(path)
+        L = read_erp(path,ac)
         Lstk.append(L)
 
     M = np.vstack(Lstk)
@@ -439,7 +512,7 @@ def sp3_decimate(file_in,file_out,step=15):
     file_out : str
         path of the output SP3 file.
     step : int, optional
-        decimation step in minutes. The default is 300.
+        decimation step in minutes. The default is 15.
 
     Returns
     -------
@@ -452,23 +525,31 @@ def sp3_decimate(file_in,file_out,step=15):
 
     good_line = True
     outline = []
-
+    n_good_lines = 0 
     for l in Fin:
         if l[0] == "*":
             epoc   = conv.tup_or_lis2dt(l[1:].strip().split()) 
             if np.mod(epoc.minute , step) == 0:
                 good_line = True
+                n_good_lines += 1
             else:
                 good_line = False
 
         if good_line:
             outline.append(l)
 
+    ### replace nb epochs
+    line0     = outline[0]
+    nlines_orig = outline[0].split()[6]
+    nlines_ok = "{:7}".format(n_good_lines).strip().zfill(3)
+    line0b = line0.replace(nlines_orig,nlines_ok)
+    outline[0] = line0b    
+
+
+    ### replace step
     line1     = outline[1]
     step_orig = outline[1].split()[3]
-
     step_ok = "{:14.8f}".format(step * 60).strip()
-
     line1b = line1.replace(step_orig,step_ok)
     outline[1] = line1b
 
@@ -731,7 +812,7 @@ def read_erp(file_path_in,ac=None):
 
 
 
-    if ac in ('COD','cod','com', 'cof', 'grg', 'mit', 'sio'):
+    if ac in ('COD','cod','com', 'cof', 'grg', 'mit', 'sio','igs','igr'):
         for i in range(tamanho+1):
             linhaatual = linecache.getline(caminho_arq, i)
             if linhaatual[0:1] in numeros:
@@ -778,7 +859,7 @@ def read_erp(file_path_in,ac=None):
 #                                                 'X-RT','Y-RT','S-XR','S-YR'])
 #        return Erp_end
 #
-    if ac in ('gbm', 'gfz'):
+    if ac in ('gbm', 'gfz','gfr',"p1_","p1r"):
         for i in range(tamanho+1):
             linhaatual = linecache.getline(caminho_arq, i)
             if linhaatual[0:1] in numeros:
@@ -834,7 +915,7 @@ def read_erp(file_path_in,ac=None):
     return Erp_end
 
 
-read_erp2 = read_erp
+### read_erp2 = read_erp
     
     
 def read_erp_snx(snx_in):
@@ -1003,6 +1084,9 @@ def read_eop_finals(file_path_in,precnut_model = 2000,
     ### if not x_A provided, then its a blank line
     DF = DF[np.logical_not(np.isnan(DF['x_A']))]
     
+    ### set mjd as int
+    DF["MJD"]   = DF["MJD"].astype(np.int64)
+    
     #### DF 2 is a simplified version, base on the C04 DF
     DF2 = pd.DataFrame()
     DF2["epoch"] = conv.MJD2dt(DF["MJD"])
@@ -1019,6 +1103,7 @@ def read_eop_finals(file_path_in,precnut_model = 2000,
         DF2.loc[np.isnan(DF['UT1-UTC_B']),'UT1-UTC'] = DF.loc[np.isnan(DF['UT1-UTC_B']),'UT1-UTC_A']
         DF2.loc[np.isnan(DF.dX_B),'dX'] = DF.loc[np.isnan(DF.dX_B),'dX_A']
         DF2.loc[np.isnan(DF.dX_B),'dY'] = DF.loc[np.isnan(DF.dY_B),'dY_A']
+                
     elif simplified_EOP_DF == "A":
         DF2[['MJD','x','y','UT1-UTC','LOD','dX','dY']] = DF[['MJD','x_A','y_A','UT1-UTC_A','LOD_A','dX_A','dY_A']]
         DF2["Bul"] = "A"
@@ -1415,7 +1500,7 @@ def read_pdm_res_slr_multi(Res_file_list_in,sol="sol"):
  #                |_|             |_|        
                 
                 
-def read_snx_trop(snxfile,dataframe_output=True):
+def read_snx_trop(snxfile,dataframe_output=True,version=2):
     """
     Read troposphere solutions from Troposphere SINEX
     """
@@ -1444,7 +1529,11 @@ def read_snx_trop(snxfile,dataframe_output=True):
                 epoc.append(conv.convert_partial_year(fields[1]))
             else:
                 date_elts_lis = fields[1].split(':')
-                yy =  int(date_elts_lis[0]) + 2000
+                if version == 2:
+                    yy =  int(date_elts_lis[0])
+                else:
+                    yy =  int(date_elts_lis[0]) + 2000
+                    
                 doy = int(date_elts_lis[1])
                 sec = int(date_elts_lis[2])
                 epoc.append(conv.doy2dt(yy,doy,seconds=sec))
@@ -1479,6 +1568,45 @@ def read_snx_trop(snxfile,dataframe_output=True):
     if dataframe_output:
         return Tropsinex_DataFrame(outtuple)
                 
+def read_gfz_trop(trpfile):
+    """
+    This function is reading GFZ troposphere sinex into Pandas DataFrame
+
+    Parameters
+    ----------
+    trpfile : Str
+        File name of GFZ troposphere sinex.
+
+    Returns
+    -------
+    DF : Pandas DataFrame
+        Pandas Dataframe of GFZ troposphere sinex.
+
+    """
+    fields = []
+    flagtrop = False
+
+    for line in open(trpfile,"r",encoding = "ISO-8859-1"):
+        if re.compile('TROP/SOLUTION').search(line):
+            flagtrop = not flagtrop
+            continue
+
+        if flagtrop ==True and line[0] == ' ':
+            field = line.split()
+            fields.append(field)
+        else:
+            continue
+
+    DF = pd.DataFrame(fields)
+    DF.drop(columns=[0,8,9,10,11,12,18,19,20],inplace=True)
+    DF.columns = ['STAT','epoc','year','doy','secofday','ztd_est','ztd_est_std','num_sat','tgn_est','tgn_est_std','tge_est','tge_est_std']
+    cols_numeric = ['epoc','ztd_est','ztd_est_std','num_sat','tgn_est','tgn_est_std','tge_est','tge_est_std']
+    DF[cols_numeric] = DF[cols_numeric].apply(pd.to_numeric, errors='coerce')
+    DF['epoc'] = conv.MJD2dt(DF['epoc'].values)
+    DF['epoc'] = DF['epoc'].dt.floor('H')
+    return DF
+
+
 def Tropsinex_DataFrame(read_sinex_result):
      """
       General description
@@ -1591,6 +1719,15 @@ def read_rinex_met_2(metfile):
         if re.compile('# / TYPES OF OBSERV').search(line):
             tmp = line.split()
             headers = tmp[1:int(tmp[0])+1]
+        if re.compile('TD SENSOR MOD/TYPE/ACC').search(line):
+            tmp = line.split()
+            temp_unc = float(tmp[-4])
+        if re.compile('PR SENSOR MOD/TYPE/ACC').search(line):
+            tmp = line.split()
+            press_unc = float(tmp[-4])
+        if re.compile('HR SENSOR MOD/TYPE/ACC').search(line):
+            tmp = line.split()
+            humrel_unc = float(tmp[-4])
         if re.compile('END OF HEADER').search(line):
             break
         ln = ln+1
@@ -1600,6 +1737,12 @@ def read_rinex_met_2(metfile):
     df['STA'] = marker
     df['epoch'] = pd.to_datetime(df[['year','month','day','hour','minute','second']],errors='coerce')
     df.drop(['year','month','day','hour','minute','second'], axis=1,inplace=True)
+    if press_unc is not None:
+        df['PR_std'] = press_unc
+    if temp_unc is not None:
+        df['TD_std'] = temp_unc
+    if humrel_unc is not None:
+        df['HR_std'] = humrel_unc
     df.set_index('epoch',inplace=True)
     return df
 
@@ -2273,4 +2416,3 @@ def list_files(dire,file = None):
 
 
  
-

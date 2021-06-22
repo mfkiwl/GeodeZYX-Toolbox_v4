@@ -1,9 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Jul  9 14:01:29 2019
+@author: psakic
 
-@author: chaiyap
+This sub-module of geodezyx.stats contains functions for low-level 
+statistics. 
+
+it can be imported directly with:
+from geodezyx import stats
+
+The GeodeZYX Toolbox is a software for simple but useful
+functions for Geodesy and Geophysics under the GNU GPL v3 License
+
+Copyright (C) 2019 Pierre Sakic et al. (GFZ, pierre.sakic@gfz-postdam.de)
+GitHub repository :
+https://github.com/GeodeZYX/GeodeZYX-Toolbox_v4
 """
+
 
 ########## BEGIN IMPORT ##########
 #### External modules
@@ -67,13 +79,19 @@ def linear_regression(x,y,fulloutput=False,alpha=.95):
 
     A = np.array([x, np.ones(len(x))])
     # linearly generated sequence
-    w = np.linalg.lstsq(A.T,y,rcond=None)[0] # obtaining the parameters
+    #### Too slow approach
+    ## https://www.freecodecamp.org/news/data-science-with-python-8-ways-to-do-linear-regression-and-measure-their-speed-b5577d75f8b/
+    ## w = np.linalg.lstsq(A.T,y,rcond=None)[0] # obtaining the parameters
+    
+    slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x,y)
 
     if not fulloutput:
-        return w[0],w[1]
+        #return w[0],w[1]
+        return slope, intercept
+
     else:
-        slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x,y)
-        return w[0],w[1],confid_interval_slope(x,y,alpha),std_err
+        #slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x,y)
+        return slope,intercept,confid_interval_slope(x,y,alpha),std_err
 
 
 def linear_reg_getvalue(X,a,b,full=True):
@@ -533,6 +551,7 @@ def gaussian_filter_GFZ_style_smoother_improved(tim_ref, dat_ref, width=7):
     num_raw = len(tim_raw)
     
     for ismt in range(num_raw):
+
         tim_raw_work = np.delete(tim_raw , ismt)
         dat_raw_work = np.delete(dat_raw , ismt)
         
@@ -709,7 +728,7 @@ def rms_mean(A):
     """
     returns RMS mean of a list/array
     """
-    return np.sqrt(np.nanmean(np.square(A)))
+    return np.sqrt(np.nanmean(np.square(np.array(A,np.float64))))
 
 def RMSmean(indata):
     """
@@ -752,21 +771,19 @@ def mad(data,mode='median'):
     return MAD
 
 
-def outlier_mad(data,seuil=3.5,verbose=False,convert_to_np_array=True,
-                mad_mode = 'median' ):
+def outlier_mad(data,threshold=3.5,verbose=False,
+                convert_to_np_array=True,
+                mad_mode = 'median', seuil=None):
     
     """    
-    clean the outlier of Y usind MAD approach 
-    and clean the corresponding values in X
-    assuming that we have the function : X => Y(X)
-    (be carefull, Y is the first argument)
+    clean the outlier of Ya dataset using the MAD approach 
     
     Parameters
     ----------
     data : list or numpy.array
         Values
 
-    seuil : float
+    threshold : float
         MAD threshold        
         
     verbose : bool
@@ -776,6 +793,11 @@ def outlier_mad(data,seuil=3.5,verbose=False,convert_to_np_array=True,
         
     mad_mode : str
         'median' or 'mean' : MAD can also be based on mean (for experimental purposes)
+        
+    seuil : float, optional
+        legacy name of 'threshold' argument.
+        will override threshold value if given
+        
   
     Returns
     -------
@@ -791,6 +813,10 @@ def outlier_mad(data,seuil=3.5,verbose=False,convert_to_np_array=True,
     http://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm
     http://web.ipac.caltech.edu/staff/fmasci/home/statistics_refs/BetterThanMAD.pdf
     """
+    
+    if seuil:
+        print("WARNING: seuil argument for outlier_mad is deprecated !!!")
+        threshold = seuil
 
     if convert_to_np_array:
         data = np.array(data)
@@ -816,27 +842,37 @@ def outlier_mad(data,seuil=3.5,verbose=False,convert_to_np_array=True,
 
     diff = data - med
     MZS = 0.6745 * np.abs(diff) / MAD
-    MZS[np.isnan(MZS)] = seuil * 10
-    boolbad = MZS < seuil
+
+    MZS[np.isnan(MZS)] = threshold * 10 ### makes a threshold virtually higher for NaN
+    boolbad = MZS < threshold
+
+
     dataout = data[boolbad]
     nbout = float(sum(boolbad))
     ratio = (nbinp-nbout)/nbinp
     if verbose:
-        print("ratio d'elimination : %i / %i, %f p.c." %(nbinp-nbout,nbinp,ratio * 100))
+        print("INFO: MAD outider elimination ratio: %i / %i, %f p.c." %(nbinp-nbout,nbinp,ratio * 100))
     return dataout , boolbad
 
-def outiler_mad(data,seuil=3.5,verbose=False,convert_to_np_array=True,
-                mad_mode = 'median' ):
+
+def outiler_mad(data,threshold=3.5,verbose=False,convert_to_np_array=True,
+                mad_mode = 'median',seuil=None):
     """
     wrapper of outlier_mad, maintened for legacy with a typo
     """
-    return outlier_mad(data,seuil , verbose , convert_to_np_array , mad_mode )
+    
+    print("WARNING: you use outiler_mad,with a typo in the name !!!")
+    print("         you should use outlier_mad instead          !!!")
+
+    
+    return outlier_mad(data,threshold , verbose , convert_to_np_array ,
+                       mad_mode,seuil)
 
 
-def outlier_mad_binom(Y,X,seuil=3.5,verbose=False,detrend_first=False,
+def outlier_mad_binom(Y,X,threshold=3.5,verbose=False,detrend_first=False,
                       return_booleans = False):   
     """    
-    clean the outlier of Y usind MAD approach 
+    clean the outlier of Y using the MAD approach 
     and clean the corresponding values in X
     assuming that we have the function : X => Y(X)
     (be carefull, Y is the first argument)
@@ -849,7 +885,7 @@ def outlier_mad_binom(Y,X,seuil=3.5,verbose=False,detrend_first=False,
     X : list or numpy.array
         X Values so as X => Y(X)
 
-    seuil : float
+    threshold : float
         MAD threshold        
         
     verbose : bool
@@ -872,7 +908,7 @@ def outlier_mad_binom(Y,X,seuil=3.5,verbose=False,detrend_first=False,
     else:
         _ , Ywork = np.array(X) , np.array(Y)
         
-    _ , bb = outiler_mad(Ywork,seuil,verbose)
+    _ , bb = outlier_mad(Ywork,threshold,verbose)
     
     Xclean = np.array(X)[bb]    
     Yclean = np.array(Y)[bb]
@@ -881,30 +917,6 @@ def outlier_mad_binom(Y,X,seuil=3.5,verbose=False,detrend_first=False,
         return Yclean , Xclean
     else:
         return Yclean , Xclean , bb
-
-def outlier_mad_binom_legacy(X,Y,seuil=3.5,verbose=False,detrend_first=False,
-                      return_booleans = False):
-    """
-    clean the outlier of X and clean the corresponding values in Y
-    
-    legacy : order of X Y is different than in the main version, and here 
-    it might be unstable for the detrend
-    """
-    if detrend_first:
-        Xwork , _ = detrend_timeseries(X,Y)
-    else:
-        Xwork , _ = np.array(X) , np.array(Y)
-        
-    _ , bb = outiler_mad(Xwork,seuil,verbose)
-    
-    Xclean = np.array(X)[bb]    
-    Yclean = np.array(Y)[bb]
-    
-    if not return_booleans:
-        return Xclean , Yclean
-    else:
-        return Xclean , Yclean , bb
-        
 
 def outlier_above_below_simple(X , low_bound  , upp_bound,
                         return_booleans = True):    
@@ -1134,16 +1146,16 @@ def outlier_above_below_binom(Y , X ,
         return Yclean , Xclean , bb
 
 
-def outlier_sigma(datasigmain,seuil=3):
+def outlier_sigma(datasigmain,threshold=3):
     """
-    si un point a un sigma > seuil * moy(sigmas) on le vire
+    si un point a un sigma > threshold * moy(sigmas) on le vire
     
     really old and discontinued, and not really efficient
     """
     moy = np.median(datasigmain)
-    marge = moy * seuil
+    marge = moy * threshold
 
-    print("INFO : outlier_sigma : moy,seuil,marge",  moy,seuil,marge)
+    print("INFO : outlier_sigma : moy,seuil,marge",  moy,threshold,marge)
 
     boolbad = np.abs(datasigmain) < marge
 
@@ -1529,4 +1541,44 @@ def color_of_season(datein):
     return outcolor
 
 
+
+ #  ______                _   _                _____                                         _ 
+ # |  ____|              | | (_)              / ____|                                       | |
+ # | |__ _   _ _ __   ___| |_ _  ___  _ __   | |  __ _ __ __ ___   _____ _   _  __ _ _ __ __| |
+ # |  __| | | | '_ \ / __| __| |/ _ \| '_ \  | | |_ | '__/ _` \ \ / / _ \ | | |/ _` | '__/ _` |
+ # | |  | |_| | | | | (__| |_| | (_) | | | | | |__| | | | (_| |\ V /  __/ |_| | (_| | | | (_| |
+ # |_|   \__,_|_| |_|\___|\__|_|\___/|_| |_|  \_____|_|  \__,_| \_/ \___|\__, |\__,_|_|  \__,_|
+ #                                                                        __/ |                
+ #                                                                       |___/       
+
+
+
+
+
+
+
+def outlier_mad_binom_legacy(X,Y,threshold=3.5,verbose=False,
+                             detrend_first=False,
+                             return_booleans = False):
+    """
+    clean the outlier of X and clean the corresponding values in Y
+    
+    legacy : order of X Y is different than in the main version, and here 
+    it might be unstable for the detrend
+    """
+    if detrend_first:
+        Xwork , _ = detrend_timeseries(X,Y)
+    else:
+        Xwork , _ = np.array(X) , np.array(Y)
+        
+    _ , bb = outiler_mad(Xwork,threshold,verbose)
+    
+    Xclean = np.array(X)[bb]    
+    Yclean = np.array(Y)[bb]
+    
+    if not return_booleans:
+        return Xclean , Yclean
+    else:
+        return Xclean , Yclean , bb
+        
 

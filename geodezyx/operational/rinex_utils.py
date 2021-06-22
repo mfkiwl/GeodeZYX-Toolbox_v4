@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Aug 16 11:53:56 2019
+@author: psakic
 
-@author: psakicki
+This sub-module of geodezyx.operational contains functions to manipulate
+RINEX files (version 2, quite obsolate). 
+
+it can be imported directly with:
+from geodezyx import operational
+
+The GeodeZYX Toolbox is a software for simple but useful
+functions for Geodesy and Geophysics under the GNU GPL v3 License
+
+Copyright (C) 2019 Pierre Sakic et al. (GFZ, pierre.sakic@gfz-postdam.de)
+GitHub repository :
+https://github.com/GeodeZYX/GeodeZYX-Toolbox_v4
 """
 
 ########## BEGIN IMPORT ##########
@@ -193,6 +204,7 @@ def rinex_read_epoch(input_rinex_path_or_string,interval_out=False,
 
     for line in Finp:
         epoch_rnx2=re.search('^ {1,2}([0-9]{1,2} * ){5}',line)
+        epoch_rnx3=re.search('^>',line)
         
         if epoch_rnx2:
             fraw = line.split() #fraw est la pour gerer les fracion de sec ...
@@ -218,9 +230,32 @@ def rinex_read_epoch(input_rinex_path_or_string,interval_out=False,
                 if rinex_60sec:
                     epochdt = epochdt + dt.timedelta(seconds=1)
                 epochs_list.append(epochdt)
-
             except:
                 print("ERR : rinex_read_epoch : " , f)
+        elif epoch_rnx3:
+            fraw = line[1:].split() #fraw est la pour gerer les fracion de sec ...
+            fraw = fraw[0:6]
+            fraw = [float(e) for e in fraw]
+                        
+            f = [int(e) for e in fraw]
+            msec = (fraw[5] - np.floor(fraw[5]))
+            msec = np.round(msec,4)
+            msec = int(msec * 10**6)
+            f.append( msec )  # ajour des fractions de sec
+
+            if f[5] == 60: # cas particulier rencontré dans des rinex avec T = 60sec
+                rinex_60sec = True
+                f[5] = 59
+            else:
+                rinex_60sec = False
+            try:
+                epochdt = dt.datetime(*f)
+                if rinex_60sec:
+                    epochdt = epochdt + dt.timedelta(seconds=1)
+                epochs_list.append(epochdt)
+            except:
+                print("ERR : rinex_read_epoch : " , f)
+            
                 
     if add_tzinfo:
         epochs_list = [ e.replace(tzinfo=dateutil.tz.tzutc()) for e in epochs_list]

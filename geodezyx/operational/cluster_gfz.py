@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Aug 16 11:55:51 2019
+@author: psakic
 
-@author: psakicki
+This sub-module of geodezyx.operational contains functions to send runs 
+to the GFZ's cluster in a batch mode. 
+
+it can be imported directly with:
+from geodezyx import operational
+
+The GeodeZYX Toolbox is a software for simple but useful
+functions for Geodesy and Geophysics under the GNU GPL v3 License
+
+Copyright (C) 2019 Pierre Sakic et al. (GFZ, pierre.sakic@gfz-postdam.de)
+GitHub repository :
+https://github.com/GeodeZYX/GeodeZYX-Toolbox_v4
 """
+
 
 ########## BEGIN IMPORT ##########
 #### External modules
@@ -23,6 +35,8 @@ from geodezyx import *                   # Import the GeodeZYX modules
 from geodezyx.externlib import *         # Import the external modules
 from geodezyx.megalib.megalib import *   # Import the legacy modules names
 
+utils.symbols_list()
+
 ##########  END IMPORT  ##########
 def cluster_GFZ_run(commands_list,
                     bunch_on_off = True,
@@ -32,7 +46,8 @@ def cluster_GFZ_run(commands_list,
                     bj_check_mini_nbr = 2,
                     bj_check_wait_time = 120,
                     bj_check_user="auto",
-                    add_cjob_cmd_prefix=True):
+                    add_cjob_cmd_prefix=True,
+                    wait_sleeping_before_launch=5):
     """
     Parameters
     ----------
@@ -65,7 +80,10 @@ def cluster_GFZ_run(commands_list,
         If, the input commands in command_list do not contain 
         the cjob prefix command, it will be added automatically
         The default is True.
-    
+    wait_sleeping_before_launch : int, optional
+        Waiting time between two successive runs.
+        (To cancel the run if necessary)
+        The default is 5.
 
     Returns
     -------
@@ -73,10 +91,10 @@ def cluster_GFZ_run(commands_list,
 
     """
 
+
     username = getpass.getuser()
 
     history_file_path = None
-    wait_sleeping_before_launch=5
 
     i_bunch = 0
 
@@ -99,7 +117,7 @@ def cluster_GFZ_run(commands_list,
     print ('Number of jobs : ' + str(len(commands_list_opera)))
     print ("****************************************")
 
-    for kommand in commands_list_opera:
+    for ikommand,kommand in enumerate(commands_list_opera):
 
         ########## LOG/PRINT command
         print(kommand)

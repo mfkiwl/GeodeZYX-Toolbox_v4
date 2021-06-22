@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Aug  2 17:36:39 2019
+@author: psakic
 
-@author: psakicki
+This sub-module of geodezyx.reffram contains functions for operations
+related to GNSS-products
+
+
+it can be imported directly with:
+from geodezyx import reffram
+
+The GeodeZYX Toolbox is a software for simple but useful
+functions for Geodesy and Geophysics under the GNU GPL v3 License
+
+Copyright (C) 2019 Pierre Sakic et al. (GFZ, pierre.sakic@gfz-postdam.de)
+GitHub repository :
+https://github.com/GeodeZYX/GeodeZYX-Toolbox_v4
 """
 
 ########## BEGIN IMPORT ##########
@@ -19,7 +31,7 @@ import pandas as pd
 import re
 import datetime as dt
 
-import sofa
+# import sofa
 
 #### geodeZYX modules
 from geodezyx import conv
@@ -57,7 +69,8 @@ def compar_orbit(Data_inp_1,Data_inp_2,step_data = 900,
         select output, Radial Transverse Normal or XYZ
 
     convert_ECEF_ECI : bool
-        convert sp3 ECEF => ECI, must be True in operational !
+        convert sp3 ECEF => ECI (Terrestrial => Celestrial)
+        must be True in operational to avoid artifacts.
 
     name1 & name2 : str (optionals)
         optional custom names for the 2 orbits
@@ -515,6 +528,7 @@ def compar_orbit_table(Diff_sat_all_df_in,RMS_style = 'natural',
     """
     Generate a table with statistical indicators for an orbit comparison
     (RMS mean, standard dev, ...)
+    
     Parameters
     ----------
     Diff_sat_all_df_in : Pandas DataFrame
@@ -673,6 +687,77 @@ def compar_orbit_frontend(DataDF1,DataDF2,ac1,ac2, sats_used_list = ['G']):
                      sats_used_list=sats_used_list)
     compar_orbit_plot(K)
     return K
+
+
+def compar_clock(DFclk_inp_1,DFclk_inp_2,col_name = "name",bias_Col_name = "bias"):
+    """
+    Compares 2 GNSS clock bias DataFrames (from .clk), to a
+    statistics table (with compar_clock_table)
+
+
+    Parameters
+    ----------
+    DFclk_inp_1 & DFclk_inp_2 : DataFrame
+        Clock DataFrame provided by files_rw.read_clk()
+
+    Returns
+    -------
+    DFclk_diff : DataFrame
+        Clock bias difference DataFrame
+    """
+    DF1idx = DFclk_inp_1.set_index([col_name,"epoch"])
+    DF1idx.sort_index(inplace=True)
+    
+    DF2idx = DFclk_inp_2.set_index([col_name,"epoch"])
+    DF2idx.sort_index(inplace=True)
+    
+    I1 = DF1idx.index
+    I2 = DF2idx.index
+    
+    Iinter = I1.intersection(I2)
+    Iinter = Iinter.sort_values()
+    
+    DF_diff_bias = DF1idx.loc[Iinter][bias_Col_name] - DF2idx.loc[Iinter][bias_Col_name]
+
+    DFclk_diff = DF1idx.loc[Iinter].copy()
+    DFclk_diff[bias_Col_name] = DF_diff_bias
+    if "ac" in  DFclk_diff.columns:
+        DFclk_diff.drop("ac",axis=1,inplace=True)
+    else:
+        DFclk_diff.drop("AC",axis=1,inplace=True)
+    DFclk_diff.rename({bias_Col_name:bias_Col_name+"_diff"},inplace=True,axis=1)
+    
+    return DFclk_diff
+    
+def compar_clock_table(DFclk_diff_in,col_name = "name",bias_Col_name = "bias_diff"):
+    """
+    Generate a table with statistical indicators for a clock comparison
+    (RMS mean, standard dev, ...)
+
+    Parameters
+    ----------
+    DFclk_diff_in : DataFrame
+        Clock bias difference DataFrame (from compar_clock)
+
+    Returns
+    -------
+    DFcompar_out : DataFrame
+        Statistical results of the comparison.
+
+    """
+    
+    DF_diff_grp = DFclk_diff_in.groupby(col_name)[bias_Col_name]
+    
+    Smin  = DF_diff_grp.min().rename("min",inplace=True)
+    Smax  = DF_diff_grp.max().rename("max",inplace=True)
+    Smean = DF_diff_grp.mean().rename("mean",inplace=True)
+    Sstd  = DF_diff_grp.std().rename("std",inplace=True)
+    Srms  = DF_diff_grp.apply(stats.rms_mean).rename("rms",inplace=True)
+    
+    DFcompar_out = pd.concat([Smin,Smax,Smean,Sstd,Srms],axis=1)
+    DFcompar_out.reset_index()
+    
+    return DFcompar_out
 
 
 def compar_sinex(snx1 , snx2 , stat_select = None, invert_select=False,
@@ -997,14 +1082,18 @@ def OrbDF_multidx_2_reg(OrbDFin,index_order=["sat","epoch"]):
     return OrbDFwrk
 
 def OrbDF_common_epoch_finder(OrbDFa_in,OrbDFb_in,return_index=False,
-                              supplementary_sort=True,order=["sat","epoch"]):
+                              supplementary_sort=False,order=["sat","epoch"]):
     """
-    Find common sats and epochs in to Orbit DF, and output the
-    corresponding Orbit DFs
-    order >> normally for sp3 is sat and epoch, but can be used for snx files as STAT and epoch
+    Find common sats and epochs in to Orbit DF,
+    and output the corresponding Orbit DFs
+    order >> normally for sp3 is sat and epoch, 
+    but can be used for snx files as STAT and epoch
     """
+    
+    #print("666:",dt.datetime.now())
     OrbDFa = OrbDF_reg_2_multidx(OrbDFa_in,index_order = order)
     OrbDFb = OrbDF_reg_2_multidx(OrbDFb_in,index_order = order)
+    #print("777:",dt.datetime.now())
     
     I1 = OrbDFa.index
     I2 = OrbDFb.index
@@ -1029,6 +1118,8 @@ def OrbDF_common_epoch_finder(OrbDFa_in,OrbDFb_in,return_index=False,
     if len(OrbDFa_out) != len(OrbDFb_out):
         print("WARN : Orb/ClkDF_common_epoch_finder : len(Orb/ClkDFa_out) != len(Orb/ClkDFb_out)")
         print("TIPS : ClkDFa_in and/or ClkDFb_in might contain duplicates")
+
+#    print("888:",dt.datetime.now())
     
     if return_index:
         return OrbDFa_out , OrbDFb_out , Iinter
@@ -1110,7 +1201,6 @@ def ClkDF_filter(ClkDF_in,
         ClkDF_wrk = ClkDF_in
     
     BOOL = np.ones(len(ClkDF_wrk)).astype(bool)
-
     
     if typ:
         BOOLtmp = ClkDF_wrk.type.isin(typ)
@@ -1132,11 +1222,9 @@ def ClkDF_filter(ClkDF_in,
         BOOLtmp = ClkDF_wrk.ac.isin(ac)
         BOOL    = BOOL & np.array(BOOLtmp)    
         
-        
     ##epoch
     BOOLtmp = (epoch_strt <= ClkDF_wrk.epoch) & (ClkDF_wrk.epoch < epoch_end)
     BOOL    = BOOL & np.array(BOOLtmp)    
-    
     
     return ClkDF_wrk[BOOL]
 
@@ -1153,7 +1241,7 @@ def ClkDF_reg_2_multidx(ClkDFin,index_order=["name","epoch"]):
     
 
 def ClkDF_common_epoch_finder(ClkDFa_in,ClkDFb_in,return_index=False,
-                              supplementary_sort=True,
+                              supplementary_sort=False,
                               order=["name","epoch"]):
     """
     Find common sats/station and epochs in to Clock DF, and output the
@@ -1167,8 +1255,43 @@ def ClkDF_common_epoch_finder(ClkDFa_in,ClkDFb_in,return_index=False,
                                      supplementary_sort=supplementary_sort,
                                      order=order)
 
+
+
+def ClkDF_common_epoch_finder_multi(ClkDF_list_in,
+                                    return_index=False,
+                                    supplementary_sort=False,
+                                    order=["name","epoch"]):
     
+    """
+    Find common sats/station and epochs in to Clock DF, and output the
+    corresponding Clock DFs
     
+    Is is the multi version of ClkDF_common_epoch_finder
+    """
+    
+    ClkDFref = ClkDF_list_in[0]
+    
+    #### First loop: we find the common epochs
+    for ClkDF in ClkDF_list_in[1:]:
+        
+        OUTTUP = OrbDF_common_epoch_finder(ClkDFref,ClkDF,
+                                           return_index=True,
+                                           supplementary_sort=supplementary_sort,
+                                           order=order)
+        
+        ClkDFref , _ , Iinter = OUTTUP
+        
+    #### second loop: we use the common epochs found for the outputed ClkDF  
+    ClkDF_list_out= []
+    for ClkDF in ClkDF_list_in:
+        ClkDFout = ClkDF.set_index(order).loc[Iinter]
+        ClkDF_list_out.append(ClkDFout)
+    
+    if not return_index:
+        return ClkDF_list_out
+    else:
+        return ClkDF_list_out,Iinter
+        
 
 
  #   _____ _      _____   __      __   _ _     _       _   _             

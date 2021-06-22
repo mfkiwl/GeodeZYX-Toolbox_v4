@@ -1,24 +1,19 @@
 # -*- coding: utf-8 -*-
 """
+@author: psakic
+
+This sub-module of geodezyx.files_rw deals with file format conversion 
+between different file standards .
+
+it can be imported directly with:
+from geodezyx import files_rw
+
 The GeodeZYX Toolbox is a software for simple but useful
-functions for Geodesy and Geophysics
+functions for Geodesy and Geophysics under the GNU GPL v3 License
 
-Copyright (C) 2019 Pierre Sakic (GFZ, pierre.sakic@gfz-postdam.de)
+Copyright (C) 2019 Pierre Sakic et al. (GFZ, pierre.sakic@gfz-postdam.de)
 GitHub repository :
-https://github.com/PierreS1/GeodeZYX-Toolbox-Lite
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/>.
+https://github.com/GeodeZYX/GeodeZYX-Toolbox_v4
 """
 
 #from geodezyx import utils,dt,time,np,os,re,struct,math,string,pd,copy
@@ -48,6 +43,7 @@ import re
 from geodezyx import conv
 from geodezyx import operational
 from geodezyx import utils
+from geodezyx.files_rw import read_logsheets
 
 #### Import star style
 from geodezyx import *                   # Import the GeodeZYX modules
@@ -1095,7 +1091,7 @@ def read_rinex_2_dataobjts(rinex_path):
     d_hen_raw = utils.grep(rinex_path,'ANTENNA: DELTA H/E/N',True).split()
     t_raw     = utils.grep(rinex_path,'TIME OF FIRST OBS',True).split()
 
-    Antobj, Recobj , Siteobj , Locobj = Antenna(),Reciever(),Site(),Location()
+    Antobj, Recobj , Siteobj , Locobj = read_logsheets.Antenna(),read_logsheets.Reciever(),read_logsheets.Site(),read_logsheets.Location()
 
     Locobj.X_coordinate_m = float(smart_elt_list(xyz_raw,0))
     Locobj.Y_coordinate_m = float(smart_elt_list(xyz_raw,1))
@@ -1474,8 +1470,8 @@ def read_sinex(sinex_path_in,
 
     Returns
     -------
-    DFout : TYPE
-        DESCRIPTION.
+    DFout : DataFrame
+        SINEX DataFrame.
 
     """
     ## Read the blocs
@@ -1711,8 +1707,8 @@ def read_sinex_versatile(sinex_path_in , id_block,
     id_block_end  = "\-" + id_block
     
     Lines_list = utils.extract_text_between_elements_2(sinex_path_in,
-                                                         id_block_strt,
-                                                         id_block_end)
+                                                       id_block_strt,
+                                                       id_block_end)
     Lines_list = Lines_list[1:-1]
     
     if not Lines_list:
@@ -1725,16 +1721,14 @@ def read_sinex_versatile(sinex_path_in , id_block,
     for i_l , l in enumerate(Lines_list):
         if not l[0] in (" ","\n") and header_lines:
             Lines_list_header.append(l)
-        if l[0] == " ":
+        #if l[0] == " ": ### 1st dataline is excluded if this test is done
+        else:
             header_lines = False
             Lines_list_OK.append(l)
-
-    Lines_str  = "".join(Lines_list_OK)
-                            
+                                
     if len(Lines_list_header) > 0 and header_line_idx:
         ### define the header
         header_line = Lines_list_header[header_line_idx]
-        
 
         Header_split = header_line.split()
         if not improved_header_detection: 
@@ -1754,7 +1748,7 @@ def read_sinex_versatile(sinex_path_in , id_block,
                 Fields_size.append(len(fld_head_space.group()))
                 #print(fld_head_space.group())                
                 
-                # # weak method (210216)
+                # # weak method (210216) archived for legacy
                 # fld_head_regex = re.compile(fld_head_split[1:] + " *") #trick:
                 # #1st char is removed, because it can be a *
                 # #and then screw the regex. This char is re-added at the end
@@ -1775,9 +1769,12 @@ def read_sinex_versatile(sinex_path_in , id_block,
             print("**** Size of the fields")
             print(Fields_size)
     
+        ### Add the header in the big string 
+        Lines_str_w_head = header_line + "".join(Lines_list_OK)
+
         ### Read the file
         try:
-            DF = pd.read_fwf(StringIO(Lines_str),widths=Fields_size)
+            DF = pd.read_fwf(StringIO(Lines_str_w_head),widths=Fields_size)
         except pd.errors.EmptyDataError as ee:
             print("ERR: something goes wrong in the header index position")
             print("     try to give its right position manually with header_line_idx")
@@ -1789,14 +1786,14 @@ def read_sinex_versatile(sinex_path_in , id_block,
         DF.rename(columns={DF.columns[0]:DF.columns[0][1:]}, inplace=True)
 
     else: # no header in the SINEX
+        Lines_str = "".join(Lines_list_OK)
         DF = pd.read_csv(StringIO(Lines_str),header=None ,
                              delim_whitespace=True)
-
 
     regex_time = "(([0-9]{2}|[0-9]{4}):[0-9]{3}|[0-9]{7}):[0-9]{5}"
     for col in DF.columns:
         if convert_date_2_dt and re.match(regex_time,
-                                          str(DF[col][0])):
+                                          str(DF[col].iloc[0])):
             try:
                 DF[col] = DF[col].apply(lambda x : conv.datestr_sinex_2_dt(x))
             except Exception as e:
@@ -1988,6 +1985,8 @@ def unzip_gz_Z(inp_gzip_file,out_gzip_file='',remove_inp=False, force = False):
 
         print('INFO : uncompressing ' + inp_gzip_file + " to " + out_gzip_file )
 
+
+    ### Removing part
     if remove_inp and os.path.getsize(out_gzip_file) > 0:
         print("INFO : removing " + inp_gzip_file)
         os.remove(inp_gzip_file)
